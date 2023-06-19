@@ -321,7 +321,7 @@ class MyRob(CRobLinkAngs):
                     self.update_pose(-wheel_speed,+wheel_speed)
 
             else:
-                #both not visited
+                #both visited
 
                 turn_decision = random.choice(['left', 'right'])
                 
@@ -397,7 +397,7 @@ class MyRob(CRobLinkAngs):
             print("Connections: ", self.connectionns)
             self.drawmap()
             self.createSmartPath()
-
+            input("Press Enter to finish...")
             exit()
 
     def drawmap(self):
@@ -500,6 +500,7 @@ class MyRob(CRobLinkAngs):
         for c in connections:
             self.G.add_edge(*c)
         pos = self.grid_positions()
+        plt.ion()
         nx.draw(self.G, pos, with_labels=True)
         plt.show()
 
