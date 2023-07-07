@@ -9,24 +9,31 @@ import itertools
 import networkx as nx
 import matplotlib.pyplot as plt
 import argparse
-
+import time
 CELLROWS=7
 CELLCOLS=14
+TRESHOLD_ROUNDING=0.3
 
 class MyRob(CRobLinkAngs):
     def __init__(self, rob_name, rob_id, angles, host,file):
         CRobLinkAngs.__init__(self, rob_name, rob_id, angles, host)
+        self.compass_readings=[]
+        self.window_size=5
         self.filename=file
+        self.rotationBuffer=0
+        self.pose = [0, 0, 0]
         self.ignore_pose=True
         self.connectionns=[]
         self.outOfLine = 0
         self.oldline=None
         self.final_connections=[]
         self.grace_period_counter=0 
-        self.looking=None
+        self.looking="r"
         self.sensor_history = [[0,0,0,0,0,0,0], [0,0,0,0,0,0,0]]
         self.x = 1
+        self.flag=True
         self.y = 1
+        self.mklist=[]
         self.seenBeacons = {0: (10,24)}
         self.compassdiff=[]
         self.oldrow=1
@@ -38,6 +45,8 @@ class MyRob(CRobLinkAngs):
         self.position = (self.x, self.y)  # Robot's current position (row, column)
         self.path = [(1,1)]  # List to store the robot's path
         self.G=nx.Graph()
+        self.sharpturn=False
+        self.tempG=nx.Graph()
     # In this map the center of cell (i,j), (i in 0..6, j in 0..13) is mapped to labMap[i*2][j*2].
     # to know if there is a wall on top of cell(i,j) (i in 0..5), check if the value of labMap[i*2+1][j*2] is space or not
     def setMap(self, labMap):
@@ -57,7 +66,6 @@ class MyRob(CRobLinkAngs):
 
         while True:
             self.readSensors()
-
             if self.measures.endLed:
                 print(self.robName + " exiting")
                 quit()
@@ -74,6 +82,7 @@ class MyRob(CRobLinkAngs):
                     state='wait'
                 if self.measures.ground==0:
                     self.setVisitingLed(True)
+                
                 self.wander()
             elif state=='wait':
                 self.setReturningLed(True)
@@ -88,105 +97,89 @@ class MyRob(CRobLinkAngs):
                 if self.measures.returningLed==True:
                     self.setReturningLed(False)
                 self.wander()
-    def fakewonder(self):
-        wheel_speed = 0.15
-        if self.measures.time == 16:
-            self.driveMotors(0,0)
-            exit()
-        else:
-            print("------------------   ", self.measures.time, "   ------------------")
-            print("Line sensors: ", self.measures.lineSensor)
-            print("Compass: ", self.measures.compass)
-            print("Line sensors: ", self.measures.lineSensor)
-            threshold=0.1
-            line = [x == '1' for x in self.measures.lineSensor]
-            self.position=(self.x ,self.y)
-            
-            
-            if self.oldline != line: 
-                #If looking right and line sensor says there is a curve to the right point is row -1
-                if self.looking == "r" and line[-1] and line[-2]:
-                    self.driveMotors(+wheel_speed,-wheel_speed)
-                    self.update_pose(+wheel_speed,-wheel_speed)
 
-                #If looking right and line sensor says there is a curve to the left point is row +1
-                elif self.looking == "r" and line[0] and line[1]:
-                    self.driveMotors(-wheel_speed,+wheel_speed)
-                    self.update_pose(-wheel_speed,+wheel_speed)
-                #If looking right and line sensor says there is a curve to the front point is col +1
-                elif self.looking == "r" and all(line):
-                    self.driveMotors(wheel_speed,wheel_speed)
-                    self.update_pose(wheel_speed,wheel_speed)
-                #If looking down and line sensor says there is a curve to the right point is col -1
-                elif self.looking == "d" and line[-1] and line[-2]:
-                    self.driveMotors(-wheel_speed,+wheel_speed)
-                    self.update_pose(-wheel_speed,+wheel_speed)
-                #If looking down and line sensor says there is a curve to the left point is col +1
-                elif self.looking == "d" and line[0] and line[1]:
-                    self.driveMotors(+wheel_speed,-wheel_speed)
-                    self.update_pose(+wheel_speed,-wheel_speed)
-                #If looking down and line sensor says there is a curve to the front point is row +1
-                elif self.looking == "d" and all(line):
-                    self.driveMotors(wheel_speed,wheel_speed)
-                    self.update_pose(wheel_speed,wheel_speed)
-
-                #If looking up and line sensor says there is a curve to the right point is col +1
-                elif self.looking == "u" and line[-1] and line[-2]:
-                    self.driveMotors(+wheel_speed,-wheel_speed)
-                    self.update_pose(+wheel_speed,-wheel_speed)
-                #If looking up and line sensor says there is a curve to the left point is col -1
-                elif self.looking == "u" and line[0] and line[1]:   
-                    self.driveMotors(-wheel_speed,+wheel_speed)
-                    self.update_pose(-wheel_speed,+wheel_speed)
-                #If looking up and line sensor says there is a curve to the front point is row -1
-                elif self.looking == "u" and all(line):
-                    self.driveMotors(wheel_speed,wheel_speed)
-                    self.update_pose(wheel_speed,wheel_speed)
-
-                #If looking left and line sensor says there is a curve to the right point is row +1
-                elif self.looking == "l" and line[-1] and line[-2]:
-                    self.driveMotors(-wheel_speed,+wheel_speed)
-                    self.update_pose(-wheel_speed,+wheel_speed)
-
-                #If looking left and line sensor says there is a curve to the left point is row -1
-                elif self.looking == "l" and line[0] and line[1]:
-                    self.driveMotors(+wheel_speed,-wheel_speed)
-                    self.update_pose(+wheel_speed,-wheel_speed)
-                #If looking left and line sensor says there is a curve to the front point is col -1
-                elif self.looking == "l" and all(line):
-                    self.driveMotors(wheel_speed,wheel_speed)
-                    self.update_pose(wheel_speed,wheel_speed)
-
-
-                print("I'm at a corner")
+#REAL cODE
+    def whereLooking(self):
+            """Checks the compass to see which direction the robot is looking"""
             if -15 < self.measures.compass <15:
-
-                print("Looking right")
                 self.looking="r"
-                self.driveMotors(wheel_speed,+wheel_speed)
-                self.update_pose(wheel_speed,+wheel_speed)
+
             elif -105 < self.measures.compass < -75:
-                print("Looking down")
+
                 self.looking="d"
-                self.driveMotors(wheel_speed,+wheel_speed)
-                self.update_pose(wheel_speed,+wheel_speed)
+
             elif 75 < self.measures.compass < 105  :
-                print("Looking Up")
+
                 self.looking="u"
-                self.driveMotors(wheel_speed,+wheel_speed)
-                self.update_pose(wheel_speed,+wheel_speed)
+             
             elif -195 < self.measures.compass < -165 or 165 < self.measures.compass < 195:
-                print("Looking left")
+
                 self.looking="l"
-                self.driveMotors(wheel_speed,+wheel_speed)
-                self.update_pose(wheel_speed,+wheel_speed)
+               
             else:
-                print("I'm lost")
-                self.driveMotors(wheel_speed,+wheel_speed)
-                self.update_pose(wheel_speed,+wheel_speed)    
-        self.oldline=line
+                self.looking=None
+
+    def rotateMyself(self,pos=(1,1)):
+        """Rotates the robot on the spot and registers the lines it sees"""
+        i=6
+        rotate=1
+        count_new=0
+        self.whereLooking()
+        currentlook=self.looking
+        print("I'm looking at ",self.looking ,"and I'm at ",pos)
+        while self.looking!=currentlook or i>3:
+            i-=1
+            self.driveMotors(rotate,-rotate)
+            self.update_pose(rotate,-rotate)
+            self.whereLooking()
+
+            
+        
+            line=sum(int(i) for i in self.measures.lineSensor)
+
+            if line >= 2 and self.looking!=None:
+                if (pos,self.looking) not in self.mklist:
+                    print("I see the line", self.measures.lineSensor, "at", self.looking)
+                    count_new+=1
+                    self.mklist.append((pos,self.looking))
+            self.readSensors()
+        self.driveMotors(-rotate,rotate)
+        self.update_pose(-rotate,rotate)
+        self.readSensors()
+        return count_new
+
+
+    def corner(self,pos=(1,1)):
+        """Defines what is seen when there is a corner (gets fed every line) to do when it reaches a corner"""
+        self.rotationBuffer+=1
+        line = self.measures.lineSensor
+        line = [int(x) for x in line]
+        if self.rotationBuffer>5:
+            print("---------------------------Rotating myself---------------------------")
+            if all(line):
+                """I'm at a T or CrossRoad junction"""
+                #If a at a T junction rotate all around 
+                count =self.rotateMyself(pos)
+                if count==4:
+                    """I'm at a crossroad"""
+                else:
+                    """I'm at a T junction"""
+
+
+            elif not all(line):
+                """I'm out of line"""
+            elif line[:6]:
+                """I'm at a left turn"""
+            elif line[-6:]:
+                """I'm at a right turn"""
+                self.rotateMyself(pos)
+        elif self.measures.time==0:
+            self.rotateMyself(pos)
+
 
     def wander(self):
+        """Wanders around the environment"""
+
         print("----------------------------------  Starting wander ----------------------------------")
         print("Time: ", self.measures.time)
         print("Compass: ", self.measures.compass)
@@ -194,26 +187,21 @@ class MyRob(CRobLinkAngs):
         print("Beacon: ", self.measures.beacon)
         print("Ground: ", self.measures.ground)
         print("Obstacle: ", self.measures.collisions)
-        test=[]
-        test.append(self.measures.compass)
+
         wheel_speed = 0.15
         if self.measures.time % 100 == 0:
             self.print_map_and_path()
-        threshold=0.1
         line = [x == '1' for x in self.measures.lineSensor]
-        self.sensor_history.append(line)
-        self.sensor_history = self.sensor_history[-5:]
-        print("History: ", self.sensor_history)
-        print("Current line: ", line)
-       
-        #Calculate position
 
+        #Calculate position
         self.position=(self.x ,self.y)
-                
         print("Position: ", self.position)
+                
         row, column = self.position  
-        row = np.ceil(row) if 1- row % 1 < threshold else np.floor(row)
-        column = np.ceil(column) if 1- column % 1 < threshold else np.floor(column)
+        row = np.ceil(row) if 1- row % 1 < TRESHOLD_ROUNDING else np.floor(row)
+        column = np.ceil(column) if 1- column % 1 < TRESHOLD_ROUNDING else np.floor(column)
+
+        print("Rounded position: ", (row, column))
 
 
         if sum(line[0:3]) > sum(line[-3:]):
@@ -242,6 +230,7 @@ class MyRob(CRobLinkAngs):
             print("Decision -> Sharp Left")
             self.driveMotors(-wheel_speed,+wheel_speed)
             self.update_pose(-wheel_speed,+wheel_speed)
+            
         elif line[1]:
             
             print("Decision -> Slow Left")
@@ -274,75 +263,80 @@ class MyRob(CRobLinkAngs):
             #if compass is 180 -180 looking left
             # if compass is 90 -270 looking up
             # if compass is -90 270 looking down
-            thold =10
-            if 360 -thold <self.measures.compass < 360+thold or -thold < self.measures.compass < thold:
-                
-                #up
-                #TODO MAYBE MUDAR O PATH
-                if (row+1, column) not in self.path:
-                    print("Decision -> Turn Right")
-                    self.driveMotors(+wheel_speed,-wheel_speed)
-                    self.update_pose(+wheel_speed,-wheel_speed)
-                else:
-                    print("Decision -> Turn Left")
-                    self.driveMotors(-wheel_speed,+wheel_speed)
-                    self.update_pose(-wheel_speed,+wheel_speed)
+            # 0 0 1 1 1 0 0
+            #   1 1 1 1 1 1 1
+            # 0 1 0
+            # 0 0 0 00 0 
+
+            for i in range(6):
+
+                thold =10
+                if 360 -thold <self.measures.compass < 360+thold or -thold < self.measures.compass < thold:
                     
+                    #up
+                    #TODO MAYBE MUDAR O PATH
+                    if (row+1, column) not in self.path:
+                        print("Decision -> Turn Right")
+                        self.driveMotors(+wheel_speed,-wheel_speed)
+                        self.update_pose(+wheel_speed,-wheel_speed)
+                    else:
+                        print("Decision -> Turn Left")
+                        self.driveMotors(-wheel_speed,+wheel_speed)
+                        self.update_pose(-wheel_speed,+wheel_speed)
+                        
+                        
+                elif 180 -thold <self.measures.compass < 180+thold or -180 -thold < self.measures.compass < -180+thold:
+                    #left
+                    if (row, column+1) not in self.path:
+                        print("Decision -> Turn Right")
+                        self.driveMotors(+wheel_speed,-wheel_speed)
+                        self.update_pose(+wheel_speed,-wheel_speed)
+                    else:
+                        print("Decision -> Turn Left")
+                        self.driveMotors(-wheel_speed,+wheel_speed)
+                        self.update_pose(-wheel_speed,+wheel_speed)
+                elif 90 -thold <self.measures.compass < 90+thold or -270 -thold < self.measures.compass < -270+thold:
+                    #right
+                    if (row, column-1) not in self.path:
+                        print("Decision -> Turn Right")
+                        self.driveMotors(+wheel_speed,-wheel_speed)
+                        self.update_pose(+wheel_speed,-wheel_speed)
+                    else:
+                        print("Decision -> Turn Left")
+                        self.driveMotors(-wheel_speed,+wheel_speed)
+                        self.update_pose(-wheel_speed,+wheel_speed)
+                elif -90 -thold <self.measures.compass < -90+thold or 270 -thold < self.measures.compass < 270+thold:
+                    #down
+                    if (row-1, column) not in self.path:
+                        print("Decision -> Turn Right")
+                        self.driveMotors(+wheel_speed,-wheel_speed)
+                        self.update_pose(+wheel_speed,-wheel_speed)
+                    else:
+                        print("Decision -> Turn Left")
+                        self.driveMotors(-wheel_speed,+wheel_speed)
+                        self.update_pose(-wheel_speed,+wheel_speed)
+
+                else:
+                    #both visited
+
+                    turn_decision = random.choice(['left', 'right'])
                     
-            elif 180 -thold <self.measures.compass < 180+thold or -180 -thold < self.measures.compass < -180+thold:
-                #left
-                if (row, column+1) not in self.path:
-                    print("Decision -> Turn Right")
-                    self.driveMotors(+wheel_speed,-wheel_speed)
-                    self.update_pose(+wheel_speed,-wheel_speed)
-                else:
-                    print("Decision -> Turn Left")
-                    self.driveMotors(-wheel_speed,+wheel_speed)
-                    self.update_pose(-wheel_speed,+wheel_speed)
-            elif 90 -thold <self.measures.compass < 90+thold or -270 -thold < self.measures.compass < -270+thold:
-                #right
-                if (row, column-1) not in self.path:
-                    print("Decision -> Turn Right")
-                    self.driveMotors(+wheel_speed,-wheel_speed)
-                    self.update_pose(+wheel_speed,-wheel_speed)
-                else:
-                    print("Decision -> Turn Left")
-                    self.driveMotors(-wheel_speed,+wheel_speed)
-                    self.update_pose(-wheel_speed,+wheel_speed)
-            elif -90 -thold <self.measures.compass < -90+thold or 270 -thold < self.measures.compass < 270+thold:
-                #down
-                if (row-1, column) not in self.path:
-                    print("Decision -> Turn Right")
-                    self.driveMotors(+wheel_speed,-wheel_speed)
-                    self.update_pose(+wheel_speed,-wheel_speed)
-                else:
-                    print("Decision -> Turn Left")
-                    self.driveMotors(-wheel_speed,+wheel_speed)
-                    self.update_pose(-wheel_speed,+wheel_speed)
-
-            else:
-                #both visited
-
-                turn_decision = random.choice(['left', 'right'])
-                
-                if turn_decision == 'left':
-                    print("Decision -> Turn Left")
-                    self.driveMotors(-wheel_speed,+wheel_speed)
-                    self.update_pose(-wheel_speed,+wheel_speed)
-                else:
-                    print("Decision -> Turn Right")
-                    self.driveMotors(+wheel_speed,-wheel_speed)
-                    self.update_pose(+wheel_speed,-wheel_speed)
+                    if turn_decision == 'left':
+                        print("Decision -> Turn Left")
+                        self.driveMotors(-wheel_speed,+wheel_speed)
+                        self.update_pose(-wheel_speed,+wheel_speed)
+                    else:
+                        print("Decision -> Turn Right")
+                        self.driveMotors(+wheel_speed,-wheel_speed)
+                        self.update_pose(+wheel_speed,-wheel_speed)
 
 
-        # Update map
-        #only count in cell if close to a threshold
-        threshold = 0.1
 
+        self.whereLooking()
+        print("Looking at: ", self.looking)
+        print("Unprocessed row/column: ",(row,column))
+        print("Old row/column: ",(self.oldrow,self.oldcol))
 
-        
-        print("row",row)
-        print("column" ,column)
         #check if position is valid
         validrow= 1 if (self.oldrow+1 == row or self.oldrow-1 == row) and column==self.oldcol  else 0
         validcolumn= 1 if (self.oldcol+1 == column or self.oldcol-1 == column) and row== self.oldrow else 0 
@@ -362,15 +356,36 @@ class MyRob(CRobLinkAngs):
         
         self.compassdiff= self.compassdiff[-2:]
 
+        try:
+            mapper[column]
+        except:
+            column=6
+    
         if (validrow and row<13) or (validcolumn and column<6) and abs(self.compassdiff[-1])-abs(self.compassdiff[0])<12:
-            self.connectionns.append([ (int(mapper[self.oldcol]),int(self.oldrow)), (int(mapper[column]),int(row))])
+            print("#######################################################################################################################################")
+            self.whereLooking()
+            print("#######################################################################################################################################")
+            if [ (int(mapper[self.oldcol]),int(self.oldrow)), (int(mapper[column]),int(row))] not in self.connectionns:
+                print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>Inserting connection between: ", (int(mapper[self.oldcol]),int(self.oldrow)), (int(mapper[column]),int(row)))
+                self.connectionns.append([ (int(mapper[self.oldcol]),int(self.oldrow)), (int(mapper[column]),int(row))])
             self.oldrow = row
             self.oldcol = column
-            print("#######################################################################################################################################")
             # Update path
             self.path.append((int(row), mapper[column]))
-            
-    
+        
+        """        self.rotationBuffer += 1
+        if self.sharpturn :
+            if self.rotationBuffer >= 20:
+                pos=(int(mapper[column]),int(row))
+                self.rotateMyself(pos)
+                self.rotationBuffer = 0  # reset counter after rotation
+                self.sharpturn = False
+        elif self.measures.time == 0:
+            self.rotateMyself()
+            self.sharpturn = False"""
+        #Check if I'm at a corner
+        #pos=(int(mapper[column]),int(row))
+        #self.corner(pos)
         if self.measures.ground!= -1 and self.measures.ground!= 0:
             #Convert to future Beacon position
             brow=mapper[column]
@@ -390,6 +405,7 @@ class MyRob(CRobLinkAngs):
         print("Seen beacons: ", self.seenBeacons)
         
         if self.measures.time==5000 :
+            
             print("Path: ", self.path)
 
 
@@ -397,10 +413,12 @@ class MyRob(CRobLinkAngs):
             print("Connections: ", self.connectionns)
             self.drawmap()
             self.createSmartPath()
-            input("Press Enter to finish...")
+            #input("Press Enter to finish...")
+            print("Possibe turns list",self.mklist)
             exit()
 
     def drawmap(self):
+        """Draws the map in the terminal and saves it to a file"""
         final_path=[]
         final_connections=[]
         # Initialize the 2D array that represents the map. 
@@ -475,6 +493,8 @@ class MyRob(CRobLinkAngs):
             row,col = self.seenBeacons[id]
             map[int(row)][int(col)] = str(id)
         print("Map: ", map)
+        for i in map:
+            print(i[20:])
 
         # Write the map to the file
         name=self.filename+'.map'
@@ -484,10 +504,12 @@ class MyRob(CRobLinkAngs):
                 f.write('\n')
 
     def grid_positions(self):
+        """Returns a dictionary with the positions of the nodes in the grid"""
         return {node: (node[1], -node[0]) for node in self.G.nodes}
 
 
     def createSmartPath(self):
+        """Creates the shortest path from the map"""
 
     # Extract unique nodes from the connections
         connections= self.final_connections
@@ -544,7 +566,7 @@ class MyRob(CRobLinkAngs):
                 a,c=i
                 a-=10
                 c-=24
-                k=(int(c),int(a))
+                k=(int(c),-int(a))
                 path_tofile.append(k)
 
         print("Path to file: ", path_tofile)
@@ -554,12 +576,14 @@ class MyRob(CRobLinkAngs):
             for node in path_tofile:
                 f.write(' '.join(map(str, node)) + '\n')
     def print_map_and_path(self):
+        """Prints the map and the path until this point"""
 
         # Print path
         for position in self.path:
             print(position)
 
     def update_pose(self, inl, inr, sigma=0.05):
+        """Updates the pose of the robot given the motor inputs"""
         # Apply the IIR filter to the motor powers
         outl = ((inl + self.outl_prev) / 2 )* np.random.normal(1, sigma)
         outr = ((inr + self.outr_prev) / 2 )* np.random.normal(1, sigma)
@@ -572,18 +596,19 @@ class MyRob(CRobLinkAngs):
         lin = (outl + outr) / 4
         rot = (outr - outl) / self.diameter
 
+        # Use the moving average filter for the compass reading
+        if len(self.compass_readings) >= self.window_size:
+            self.compass_readings.pop(0)
+        self.compass_readings.append(self.measures.compass)
+        filtered_compass = np.mean(self.compass_readings)
+
         # Calculate new pose
         self.x = self.x + lin * np.cos(np.deg2rad(self.measures.compass))
         self.y = self.y + lin * np.sin(np.deg2rad(self.measures.compass))
         self.theta = self.theta + rot
 
-        #IF COM        if busslla
-        # Update pose pra atualizar a orientação
-
-
         print("Pose: ", np.cos(np.deg2rad(self.measures.compass)))
         print("lin",lin)
-            
 
 
 rob_name = "pClient"
