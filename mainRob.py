@@ -46,7 +46,7 @@ class MyRob(CRobLinkAngs):
         self.path = [(1,1)]  # List to store the robot's path
         self.G=nx.Graph()
         self.sharpturn=False
-        self.tempG=nx.Graph()
+
     # In this map the center of cell (i,j), (i in 0..6, j in 0..13) is mapped to labMap[i*2][j*2].
     # to know if there is a wall on top of cell(i,j) (i in 0..5), check if the value of labMap[i*2+1][j*2] is space or not
     def setMap(self, labMap):
@@ -82,7 +82,10 @@ class MyRob(CRobLinkAngs):
                     state='wait'
                 if self.measures.ground==0:
                     self.setVisitingLed(True)
-                
+                #if self.measures.time==1000:
+                #    if self.looking != None:
+                #        self.returnToStart()
+
                 self.wander()
             elif state=='wait':
                 self.setReturningLed(True)
@@ -99,6 +102,36 @@ class MyRob(CRobLinkAngs):
                 self.wander()
 
 #REAL cODE
+    def returnToStart(self):
+        """Returns to the starting point"""
+        print("Returning to start")
+        path = nx.shortest_path(self.G, source=(self.x,self.y), target=(1,1))
+        currx=self.x
+        curry=self.y
+        print("Path is", path)
+        while path:  # while there are still nodes in the path
+            next_node = path[0]  # get the next node from the path
+
+            # calculate the direction of the next node from the current position
+            dx = next_node.x - currx
+            dy = next_node.y - curry
+            target_angle = np.arctan2(dy, dx)
+            target_angle = np.degrees(target_angle)
+            # calculate the angle you need to rotate to face the next node
+            #self.looing r=0 d=-90 u=90 l=-180
+            rotate_angle = target_angle - self.measures.compass
+            print("Rotating", rotate_angle)
+            # rotate to that direction (you would replace this with your actual method to rotate the robot)
+            #self.rotate(rotate_angle)
+
+            # move to the next node (replace this with your actual method to move the robot)
+            #self.move_to_position(next_node.x, next_node.y)
+
+            #update the current position
+            currx = next_node.x
+            curry = next_node.y
+            # remove the first node from the path
+            path.pop(0)
     def whereLooking(self):
             """Checks the compass to see which direction the robot is looking"""
             if -15 < self.measures.compass <15:
@@ -175,7 +208,6 @@ class MyRob(CRobLinkAngs):
                 self.rotateMyself(pos)
         elif self.measures.time==0:
             self.rotateMyself(pos)
-
 
     def wander(self):
         """Wanders around the environment"""
@@ -413,6 +445,9 @@ class MyRob(CRobLinkAngs):
             print("Connections: ", self.connectionns)
             self.drawmap()
             self.createSmartPath()
+            name=self.filename+'.png'
+
+            plt.savefig(name, dpi=200)
             #input("Press Enter to finish...")
             print("Possibe turns list",self.mklist)
             exit()
@@ -518,18 +553,60 @@ class MyRob(CRobLinkAngs):
         for i in self.seenBeacons:
             beacons[counter]=self.seenBeacons[i]
             counter+=1
-
+        #Build the graph
         for c in connections:
             self.G.add_edge(*c)
+
         pos = self.grid_positions()
+        special_nodes=[]
+        for i in self.seenBeacons:
+            if i!=0:
+                brow,bcol=self.seenBeacons[i]
+                special_node=(brow,bcol)
+                special_nodes.append(special_node)
+            else:
+                start_node=self.seenBeacons[i]
+                
+        node_colors=[]
+        print("special nodes: ", special_nodes)
+        print("start node: ", start_node)
+        for node in self.G.nodes():
+            print("node: ", node)
+            if node in special_nodes:
+                node_colors.append('red')  # special nodes
+            elif node == start_node:
+                node_colors.append('green')  # start node
+            else:
+                node_colors.append('blue')  # other nodes
+        plt.clf()
         plt.ion()
-        nx.draw(self.G, pos, with_labels=True)
+        nx.draw(self.G, pos, with_labels=False,node_color=node_colors)
         plt.show()
+        plt.plot([], [], color='blue', label='Regular nodes')  # regular nodes dummy plot
+        plt.plot([], [], color='red', label='Beacons')  # special nodes dummy plot
+        plt.plot([], [], color='green', label='Start node')  # start node dummy plot
+        plt.legend()
 
         # Compute the shortest path distance between each pair of beacons
         beacon_distances = {}
         start_node = self.seenBeacons[0]
         print("Beacons:", beacons)
+        if len(self.seenBeacons)<2:
+            print("Not enough beacons")
+            a,c=self.seenBeacons[0]
+            
+            a-=10
+            c-=24
+            k=(int(c),-int(a))
+            
+
+            print("Only start node: ", k)
+            name= self.filename+'.path'
+            # Write the shortest route to a text file
+            with open(name, 'w') as f:
+                
+                f.write(' '.join(map(str, k)) + '\n')
+            return
 
         for i in range(len(beacons)):
             for j in range(i+1, len(beacons)):
